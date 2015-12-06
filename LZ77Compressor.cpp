@@ -3,8 +3,8 @@
 LZ77Compressor::LZ77Compressor(std::string inputFileName){
     
     this->inputFileName = inputFileName;
-    this->historySliderLength = 30;
-    this->activeSliderLength = 10;
+    this->historySliderLength = 150;
+    this->activeSliderLength = 50;
     
     this->historySlider = "";
     this->activeSlider = "";
@@ -16,18 +16,21 @@ void LZ77Compressor::compress() {
 
     addLetterToOutput(activeSlider.at(0));
 
-    for (u_int i = 0; i < 80; i++) {
+    // TODO Replace constant with something better
+    for (u_int i = 1; i > 0; i++) {
         moveSliders();
-        // printSliders();
-        struct match* m = checkForLongestMatch(); 
+
+        // TODO Move outside loop
+        struct Reference* m = checkForLongestMatch(); 
         if (m != NULL) {
-            // CONSOLE << "Found match at " << m->position << " len " << m->length << ENDL;
             addReferenceToOutput(historySlider.length() - m->position, m->length);
 
-            for (u_int j = 0; j < m->length - 1; j++) {
-                moveSliders();
-            }
-            
+            // TODO This loop may be very slow
+            // for (u_int j = 0; j < m->length - 1; j++) {
+            //     moveSliders();
+            // }
+            moveSliders(m->length);
+
             free(m);
         } else {
             addLetterToOutput(activeSlider.at(0));
@@ -58,6 +61,8 @@ void LZ77Compressor::moveSliders() {
     }
     historySlider += activeSlider.at(0);
     activeSlider.erase(0,1);
+
+    // TODO maybe make c static?
     char c = readChar();
 
     if (c == INVALID_CHAR) {
@@ -68,17 +73,41 @@ void LZ77Compressor::moveSliders() {
     activeSlider += c;
 }
 
-LZ77Compressor::match* LZ77Compressor::checkForLongestMatch() {
+void LZ77Compressor::moveSliders(u_int distance) {
+    if (distance > historySliderLength) {
+        CONSOLE << "distance > historySliderLength" << ENDL;
+    }
+
+    if (historySlider.length() >= historySliderLength) {
+        historySlider.erase(0,distance);
+    }
+    historySlider += activeSlider.substr(0, distance);
+    activeSlider.erase(0,distance);
+
+    // TODO maybe make c static?
+    char c;
+
+    for (u_int i = 0; i < distance; i++) {
+        c = readChar();
+        if (c == INVALID_CHAR) {
+            CONSOLE<< "Error reading file. Cannot move slider." << ENDL;
+            exit(1);
+        }
+        activeSlider += c;
+    }
+}
+
+LZ77Compressor::Reference* LZ77Compressor::checkForLongestMatch() {
     for (u_int i = activeSlider.length(); i > 2; i--) {
         std::string activeSliderCropped = activeSlider.substr(0, i);
         // CONSOLE << "Check |" << historySlider << "| with |" << activeSlider << "| length " << i << " (" << activeSliderCropped << ")" << ENDL;
+
+        // TODO Move outside loop
         std::size_t position = historySlider.find(activeSliderCropped);
 
-        if (position == std::string::npos) {
-            // CONSOLE << "Not found" << ENDL;
-        } else {
+        if (position != std::string::npos) {
             // CONSOLE << "Found at position " << position << " length " << i << ENDL;
-            struct match *m = new LZ77Compressor::match();
+            struct Reference *m = new LZ77Compressor::Reference();
             m->position = position;
             m->length = i;
             return m;
@@ -101,7 +130,7 @@ void LZ77Compressor::initializeActiveSlider() {
 
 void LZ77Compressor::printSliders() {
     CONSOLE << "|" << historySlider << "|" << activeSlider << "|" << ENDL; //  << " ";
-    return;
+
     for (u_int i = 0; i < historySliderLength; i++) {
         CONSOLE << i % 10;
     }

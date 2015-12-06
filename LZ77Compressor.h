@@ -13,7 +13,7 @@
 
 class LZ77Compressor {
 
-struct match
+struct Reference
 {
     u_int position;
     u_int length;
@@ -29,10 +29,11 @@ struct match
         void initializeActiveSlider();
         void prepareInputFile();
         void closeInputFile();
-        match* checkForLongestMatch();
+        Reference* checkForLongestMatch();
         char readChar();
         void printSliders();
         void moveSliders();
+        void moveSliders(u_int);
         void addLetterToOutput(char);
         void addReferenceToOutput(u_int, u_int);
 
