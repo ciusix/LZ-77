@@ -22,13 +22,19 @@ struct Reference
     private:
         std::string inputFileName;
         std::ifstream inputFile;
+        std::string outputFileName;
+        std::ofstream outputFile;
         
         std::string historySlider, activeSlider;
         u_int historySliderLength, activeSliderLength;
-        
+        u_int referenceHistoryBits, referenceActiveBits;
+
         void initializeActiveSlider();
         void prepareInputFile();
         void closeInputFile();
+        void prepareOutputFile();
+        void closeOutputFile();
+        void magic();
         Reference* checkForLongestMatch();
         char readChar();
         void printSliders();
@@ -36,9 +42,12 @@ struct Reference
         void moveSliders(u_int);
         void addLetterToOutput(char);
         void addReferenceToOutput(u_int, u_int);
+        void writeABitToFile(char);
+        void writeABitToFile(char, bool);
+        u_int getBytesNeededForNumber(u_int);
 
     public:
-        LZ77Compressor(std::string);
+        LZ77Compressor(std::string, std::string);
         
         void compress();
 };

@@ -1,43 +1,56 @@
 #include "LZ77Compressor.h"
 
-LZ77Compressor::LZ77Compressor(std::string inputFileName){
+/*
+
+|0 00000000| - letter
+|1 000..000| - reference
+
+Reference = Distance | Length
+
+*/
+
+LZ77Compressor::LZ77Compressor(std::string inputFileName, std::string outputFileName){
     
     this->inputFileName = inputFileName;
+    this->outputFileName = outputFileName;
+
     this->historySliderLength = 150;
     this->activeSliderLength = 50;
     
     this->historySlider = "";
     this->activeSlider = "";
+
+    referenceHistoryBits = getBytesNeededForNumber(historySliderLength);
+    referenceActiveBits = getBytesNeededForNumber(activeSliderLength);
 }
 
 void LZ77Compressor::compress() {
     prepareInputFile();
+    prepareOutputFile();
     initializeActiveSlider();
+    magic();
+    closeInputFile();
+    closeOutputFile();
+}
 
+void LZ77Compressor::magic() {
     addLetterToOutput(activeSlider.at(0));
+
+    struct Reference* m;
 
     // TODO Replace constant with something better
     for (u_int i = 1; i > 0; i++) {
         moveSliders();
 
-        // TODO Move outside loop
-        struct Reference* m = checkForLongestMatch(); 
+        m = checkForLongestMatch(); 
         if (m != NULL) {
             addReferenceToOutput(historySlider.length() - m->position, m->length);
-
-            // TODO This loop may be very slow
-            // for (u_int j = 0; j < m->length - 1; j++) {
-            //     moveSliders();
-            // }
-            moveSliders(m->length);
-
+            moveSliders(m->length - 1);
             free(m);
         } else {
             addLetterToOutput(activeSlider.at(0));
         }
     }
-    
-    closeInputFile();
 }
 
 void LZ77Compressor::prepareInputFile() {
@@ -52,6 +65,21 @@ void LZ77Compressor::prepareInputFile() {
 void LZ77Compressor::closeInputFile() {
 	if (inputFile.is_open()) {
         inputFile.close();
+    }
+}
+
+void LZ77Compressor::prepareOutputFile() {
+    outputFile.open(outputFileName.c_str(), std::ios::binary | std::ios::out | std::ios::app);
+    
+    if (!outputFile.is_open()) {
+        CONSOLE << "Error opening " << outputFileName << ". Quitting...";
+        exit(1);
+    }
+}
+
+void LZ77Compressor::closeOutputFile() {
+    if (outputFile.is_open()) {
+        outputFile.close();
     }
 }
 
@@ -151,8 +179,56 @@ char LZ77Compressor::readChar() {
 
 void LZ77Compressor::addLetterToOutput(char letter) {
     CONSOLE << "Letter   " << letter << ENDL;
+    writeABitToFile(0);
+    for (int i = 7; i >= 0; i--) {
+        writeABitToFile(letter >> i);
+    }
 }
 
 void LZ77Compressor::addReferenceToOutput(u_int position, u_int length) {
     CONSOLE << "Refrence " << position << " " << length << " (" << historySlider.substr(historySlider.length() - position, length) << ")" << ENDL;
+
+    writeABitToFile(0);
+    for (int i = referenceHistoryBits - 1; i >= 0; i--) {
+        writeABitToFile(position >> i);
+    }
+
+    for (int i = referenceActiveBits - 1; i >= 0; i--) {
+        writeABitToFile(length >> i);
+    }
+}
+
+void LZ77Compressor::writeABitToFile(char bit) {
+    writeABitToFile(bit, false);
+}
+
+void LZ77Compressor::writeABitToFile(char bit, bool flush) {
+    static short currentBitNumber = 0;
+    static char c = 0;
+    
+    if (flush) {
+        outputFile << ((char)(c << (8 - currentBitNumber)));
+    }
+        
+    if (currentBitNumber == 8) {
+        outputFile << c;
+        c = 0;
+        currentBitNumber = 0;
+    } else {
+        c = c << 1;
+    }
+    
+    c = (c | (bit & 0x1));  
+    currentBitNumber++;
+}
+
+u_int LZ77Compressor::getBytesNeededForNumber(u_int number) {
+    u_int bound = 1;
+    for (int i = 0; i < 32; i++) {
+        if (bound >= number) {
+            return i;
+        }
+        bound *= 2;
+    } 
+    return 32;
 }
