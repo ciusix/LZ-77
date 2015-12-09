@@ -42,13 +42,14 @@ LZ77Compressor::LZ77Compressor(std::string inputFileName, std::string outputFile
     referenceHistoryBits = getBytesNeededForNumber(historySliderLength);
     referenceActiveBits = getBytesNeededForNumber(activeSliderLength);
 
-    minimalMatchLength = (int)((1 + referenceHistoryBits + referenceActiveBits) / 9) + 1;
+    minimalMatchLength = (int)((1 + referenceHistoryBits + referenceActiveBits + 1) / 9 + 1);
 }
 
 void LZ77Compressor::compress() {
     prepareInputFile();
     prepareOutputFile();
     writeMetaData();
+
     initializeActiveSlider();
     magic();
     closeInputFile();
