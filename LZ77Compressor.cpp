@@ -2,50 +2,82 @@
 
 /*
 
-|0 00000000| - letter
-|1 000..000| - reference
+File structure:
+|00000000|00000000|00..00|
+ ^        ^        ^
+ |        |        |
+ |        |        +- Compressed data
+ |        +- Active Size (8 bits)
+ +- History Size (8 bits)
 
-Reference = Distance | Length
+Every entry look like this:
+|0 00000000| - letter (1 + 8 bits)
+|1 000..000| - reference (1 + HistorySize + ActiveSize bits)
+
+Reference look like this:
+|1|00..00|00..00|
+ ^ ^      ^
+ | |      |
+ | |      +- Length of substring (ActiveSize bits)
+ | +- Distance (HistorySize bits)
+ +- Type (1 bit)
 
 */
 
-LZ77Compressor::LZ77Compressor(std::string inputFileName, std::string outputFileName){
+LZ77Compressor::LZ77Compressor(std::string inputFileName, std::string outputFileName, u_int historySliderSize, u_int activeSliderSize){
     
     this->inputFileName = inputFileName;
     this->outputFileName = outputFileName;
 
-    this->historySliderLength = 150;
-    this->activeSliderLength = 50;
+    this->historySliderSize = historySliderSize;
+    this->activeSliderSize = activeSliderSize;
+
+    this->historySliderLength = pow(2, historySliderSize);
+    this->activeSliderLength = pow(2, activeSliderSize);
     
     this->historySlider = "";
     this->activeSlider = "";
 
+    // Same as Size, but just in case...
     referenceHistoryBits = getBytesNeededForNumber(historySliderLength);
     referenceActiveBits = getBytesNeededForNumber(activeSliderLength);
+
+    minimalMatchLength = (int)((1 + referenceHistoryBits + referenceActiveBits) / 9) + 1;
 }
 
 void LZ77Compressor::compress() {
     prepareInputFile();
     prepareOutputFile();
+    writeMetaData();
     initializeActiveSlider();
     magic();
     closeInputFile();
     closeOutputFile();
 }
 
+void LZ77Compressor::writeMetaData() {
+    CONSOLE << "History size: " << historySliderSize << " length: " << historySliderLength << " needed reference bits " << referenceHistoryBits << ENDL;
+    CONSOLE << "Active  size: " <<  activeSliderSize << " length: " <<  activeSliderLength << " needed reference bits " <<  referenceActiveBits << ENDL;
+    CONSOLE << "Minimum match length " << minimalMatchLength << ENDL;
+
+    addLetterToOutput(referenceHistoryBits);
+    addLetterToOutput(referenceActiveBits);
+}
+
 void LZ77Compressor::magic() {
     addLetterToOutput(activeSlider.at(0));
 
     struct Reference* m;
+    bool finish = false;
 
     // TODO Replace constant with something better
-    for (u_int i = 1; i > 0; i++) {
-        moveSliders();
+    while (!finish) {
+        finish = !moveSliders();
 
         m = checkForLongestMatch(); 
         if (m != NULL) {
             addReferenceToOutput(historySlider.length() - m->position, m->length);
-            moveSliders(m->length - 1);
+            finish = !moveSliders(m->length - 1);
             free(m);
         } else {
             addLetterToOutput(activeSlider.at(0));
@@ -60,11 +92,15 @@ void LZ77Compressor::prepareInputFile() {
         CONSOLE << "Error opening " << inputFileName << ". Quitting...";
         exit(1);
     }
+
+    CONSOLE << "Opened " << inputFileName << ENDL;
 }
 
 void LZ77Compressor::closeInputFile() {
 	if (inputFile.is_open()) {
         inputFile.close();
+
+        CONSOLE << "Closed " << inputFileName << ENDL;
     }
 }
 
@@ -75,15 +111,19 @@ void LZ77Compressor::prepareOutputFile() {
         CONSOLE << "Error opening " << outputFileName << ". Quitting...";
         exit(1);
     }
+
+    CONSOLE << "Opened " << outputFileName << ENDL;
 }
 
 void LZ77Compressor::closeOutputFile() {
     if (outputFile.is_open()) {
         outputFile.close();
+
+        CONSOLE << "Closed " << outputFileName << ENDL;
     }
 }
 
-void LZ77Compressor::moveSliders() {
+bool LZ77Compressor::moveSliders() {
     if (historySlider.length() >= historySliderLength) {
         historySlider.erase(0,1);
     }
@@ -91,17 +131,18 @@ void LZ77Compressor::moveSliders() {
     activeSlider.erase(0,1);
 
     // TODO maybe make c static?
-    char c = readChar();
+    char flag = 0x00;
+    char c = readChar(&flag);
 
-    if (c == INVALID_CHAR) {
-        CONSOLE<< "Error reading file. Cannot move slider." << ENDL;
-        exit(1);
+    if (flag != 0x00) {
+        return false;
     }
 
     activeSlider += c;
+    return true;
 }
 
-void LZ77Compressor::moveSliders(u_int distance) {
+bool LZ77Compressor::moveSliders(u_int distance) {
     if (distance > historySliderLength) {
         CONSOLE << "distance > historySliderLength" << ENDL;
     }
@@ -114,19 +155,20 @@ void LZ77Compressor::moveSliders(u_int distance) {
 
     // TODO maybe make c static?
     char c;
+    char flag = 0x00;
 
     for (u_int i = 0; i < distance; i++) {
-        c = readChar();
-        if (c == INVALID_CHAR) {
-            CONSOLE<< "Error reading file. Cannot move slider." << ENDL;
-            exit(1);
+        c = readChar(&flag);
+        if (flag != 0x00) {
+            return false;
         }
         activeSlider += c;
     }
+    return true;
 }
 
 LZ77Compressor::Reference* LZ77Compressor::checkForLongestMatch() {
-    for (u_int i = activeSlider.length(); i > 2; i--) {
+    for (u_int i = activeSlider.length(); i > minimalMatchLength; i--) {
         std::string activeSliderCropped = activeSlider.substr(0, i);
         // CONSOLE << "Check |" << historySlider << "| with |" << activeSlider << "| length " << i << " (" << activeSliderCropped << ")" << ENDL;
 
@@ -146,9 +188,10 @@ LZ77Compressor::Reference* LZ77Compressor::checkForLongestMatch() {
 
 void LZ77Compressor::initializeActiveSlider() {
     char c = '\0';
+    char flag = 0x00;
     for (u_int i = 0; i < activeSliderLength; i++) {
-        c = readChar();
-        if (c == INVALID_CHAR) {
+        c = readChar(&flag);
+        if (flag != 0x00) {
             CONSOLE<< "Error reading file. Cannot initialize active slider." << ENDL;
             exit(1);
         }
@@ -169,10 +212,10 @@ void LZ77Compressor::printSliders() {
     CONSOLE << ENDL;
 }
 
-char LZ77Compressor::readChar() {
+char LZ77Compressor::readChar(char *flag) {
 	static char c;
 	if (!(inputFile.get(c))) {
-		return INVALID_CHAR;
+		(*flag) = 0x01;
 	}
     return c;
 }

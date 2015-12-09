@@ -10,6 +10,8 @@
 #include <fstream>
 #include <iostream>
 #include <stdlib.h>
+#include <bitset>
+#include <math.h>
 
 class LZ77Compressor {
 
@@ -26,20 +28,24 @@ struct Reference
         std::ofstream outputFile;
         
         std::string historySlider, activeSlider;
-        u_int historySliderLength, activeSliderLength;
-        u_int referenceHistoryBits, referenceActiveBits;
+
+        u_int historySliderLength, activeSliderLength; // length (letters count)
+        u_int historySliderSize, activeSliderSize; // Size 10 = 10 bits = 1024 letters
+        u_int referenceHistoryBits, referenceActiveBits; // how many bits are needed to write reference and length (w_1, w_2)
+        u_int minimalMatchLength;
 
         void initializeActiveSlider();
         void prepareInputFile();
         void closeInputFile();
         void prepareOutputFile();
         void closeOutputFile();
+        void writeMetaData();
         void magic();
         Reference* checkForLongestMatch();
-        char readChar();
+        char readChar(char*);
         void printSliders();
-        void moveSliders();
-        void moveSliders(u_int);
+        bool moveSliders();
+        bool moveSliders(u_int);
         void addLetterToOutput(char);
         void addReferenceToOutput(u_int, u_int);
         void writeABitToFile(char);
@@ -47,7 +53,7 @@ struct Reference
         u_int getBytesNeededForNumber(u_int);
 
     public:
-        LZ77Compressor(std::string, std::string);
+        LZ77Compressor(std::string, std::string, u_int, u_int);
         
         void compress();
 };
