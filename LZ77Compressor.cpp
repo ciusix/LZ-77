@@ -24,45 +24,49 @@ Reference look like this:
 
 */
 
-LZ77Compressor::LZ77Compressor(std::string inputFileName, std::string outputFileName, u_int historySliderSize, u_int activeSliderSize){
-    
-    this->inputFileName = inputFileName;
-    this->outputFileName = outputFileName;
+LZ77Compressor::LZ77Compressor(std::string inputFileName, std::string outputFileName, u_int historySize, u_int activeSize)
+    :LZ77CompressorDecompressorBase(inputFileName, outputFileName) {
 
-    this->historySliderSize = historySliderSize;
-    this->activeSliderSize = activeSliderSize;
+    this->historySize = historySize;
+    this->activeSize = activeSize;
 
-    this->historySliderLength = pow(2, historySliderSize);
-    this->activeSliderLength = pow(2, activeSliderSize);
+    minimalMatchLength = getMinimalMatchLength(historySize, activeSize);
+
+    this->historyLength = pow(2, historySize) - 1;
+    this->activeLength = pow(2, activeSize);
     
     this->historySlider = "";
     this->activeSlider = "";
 
-    // Same as Size, but just in case...
-    referenceHistoryBits = getBytesNeededForNumber(historySliderLength);
-    referenceActiveBits = getBytesNeededForNumber(activeSliderLength);
-
-    minimalMatchLength = (int)((1 + referenceHistoryBits + referenceActiveBits + 1) / 9 + 1);
+    this->activeLength += minimalMatchLength - 1;
 }
 
 void LZ77Compressor::compress() {
     prepareInputFile();
     prepareOutputFile();
     writeMetaData();
-
     initializeActiveSlider();
+
+    possiblePositions = new int[historyLength];
+
     magic();
     closeInputFile();
     closeOutputFile();
 }
 
 void LZ77Compressor::writeMetaData() {
-    CONSOLE << "History size: " << historySliderSize << " length: " << historySliderLength << " needed reference bits " << referenceHistoryBits << ENDL;
-    CONSOLE << "Active  size: " <<  activeSliderSize << " length: " <<  activeSliderLength << " needed reference bits " <<  referenceActiveBits << ENDL;
+    #ifdef DEBUG_MODE
+    CONSOLE << "History size: " << historySize << " length: " << historyLength + 1 << " needed reference bits " << historySize << ENDL;
+    CONSOLE << "Active  size: " <<  activeSize << " length: " <<  activeLength << " needed reference bits " <<  activeSize << ENDL;
     CONSOLE << "Minimum match length " << minimalMatchLength << ENDL;
+    #endif
 
-    addLetterToOutput(referenceHistoryBits);
-    addLetterToOutput(referenceActiveBits);
+    for (int i = 7; i >= 0; i--) {
+        writeABitToFile(historySize >> i);
+    }
+    for (int i = 7; i >= 0; i--) {
+        writeABitToFile(activeSize >> i);
+    }
 }
 
 void LZ77Compressor::magic() {
@@ -71,9 +75,12 @@ void LZ77Compressor::magic() {
     struct Reference* m;
     bool finish = false;
 
-    // TODO Replace constant with something better
     while (!finish) {
         finish = !moveSliders();
+
+        if (finish) {
+            break;
+        }
 
         m = checkForLongestMatch(); 
         if (m != NULL) {
@@ -83,116 +90,181 @@ void LZ77Compressor::magic() {
         } else {
             addLetterToOutput(activeSlider.at(0));
         }
-    }
-}
 
-void LZ77Compressor::prepareInputFile() {
-    inputFile.open(inputFileName.c_str(), std::ios::binary | std::ios::in);
-	
-	if (!inputFile.is_open()) {
-        CONSOLE << "Error opening " << inputFileName << ". Quitting...";
-        exit(1);
+        if (finish) {
+            break;
+        }
     }
 
-    CONSOLE << "Opened " << inputFileName << ENDL;
-}
-
-void LZ77Compressor::closeInputFile() {
-	if (inputFile.is_open()) {
-        inputFile.close();
-
-        CONSOLE << "Closed " << inputFileName << ENDL;
-    }
-}
-
-void LZ77Compressor::prepareOutputFile() {
-    outputFile.open(outputFileName.c_str(), std::ios::binary | std::ios::out | std::ios::app);
-    
-    if (!outputFile.is_open()) {
-        CONSOLE << "Error opening " << outputFileName << ". Quitting...";
-        exit(1);
-    }
-
-    CONSOLE << "Opened " << outputFileName << ENDL;
-}
-
-void LZ77Compressor::closeOutputFile() {
-    if (outputFile.is_open()) {
-        outputFile.close();
-
-        CONSOLE << "Closed " << outputFileName << ENDL;
-    }
+    // Flush last bits to file
+    writeABitToFile(0, true);
 }
 
 bool LZ77Compressor::moveSliders() {
-    if (historySlider.length() >= historySliderLength) {
-        historySlider.erase(0,1);
-    }
-    historySlider += activeSlider.at(0);
-    activeSlider.erase(0,1);
-
-    // TODO maybe make c static?
-    char flag = 0x00;
-    char c = readChar(&flag);
-
-    if (flag != 0x00) {
-        return false;
-    }
-
-    activeSlider += c;
-    return true;
+    return moveSliders(1);
 }
 
 bool LZ77Compressor::moveSliders(u_int distance) {
-    if (distance > historySliderLength) {
-        CONSOLE << "distance > historySliderLength" << ENDL;
-    }
-
-    if (historySlider.length() >= historySliderLength) {
-        historySlider.erase(0,distance);
-    }
     historySlider += activeSlider.substr(0, distance);
     activeSlider.erase(0,distance);
 
-    // TODO maybe make c static?
     char c;
-    char flag = 0x00;
+    char flag = CHAR_READ_SUCC;
 
     for (u_int i = 0; i < distance; i++) {
         c = readChar(&flag);
-        if (flag != 0x00) {
-            return false;
+        if (flag != CHAR_READ_FAIL) {
+            activeSlider += c;
         }
-        activeSlider += c;
     }
-    return true;
+
+    if (historySlider.length() >= historyLength) {
+        historySlider.erase(0, historyLength - historySlider.length());
+    }
+
+    return activeSlider.length() != 0;
 }
 
+/*
 LZ77Compressor::Reference* LZ77Compressor::checkForLongestMatch() {
+    std::size_t position;
+    std::string activeSliderCropped;
     for (u_int i = activeSlider.length(); i > minimalMatchLength; i--) {
-        std::string activeSliderCropped = activeSlider.substr(0, i);
-        // CONSOLE << "Check |" << historySlider << "| with |" << activeSlider << "| length " << i << " (" << activeSliderCropped << ")" << ENDL;
-
-        // TODO Move outside loop
-        std::size_t position = historySlider.find(activeSliderCropped);
+        
+        activeSliderCropped = activeSlider.substr(0, i);  
+        position = historySlider.find(activeSliderCropped);
 
         if (position != std::string::npos) {
-            // CONSOLE << "Found at position " << position << " length " << i << ENDL;
             struct Reference *m = new LZ77Compressor::Reference();
             m->position = position;
             m->length = i;
             return m;
         }
+        
     }
+    return NULL;
+}
+*/
+
+/*
+LZ77Compressor::Reference* LZ77Compressor::checkForLongestMatch() {
+    static u_int historySliderLength, activeSliderLength;
+    historySliderLength = historySlider.length();
+    activeSliderLength = activeSlider.length();
+
+    static u_int possibilities;
+    possibilities = historySliderLength;
+
+    static int resultPos, resultLen;
+    resultPos = -1;
+    resultLen = -1;
+    
+    static u_int i, length, hPos;
+
+    static char chr;
+    
+    static u_int hPosMinLength, historySliderLengthPlusLength;
+
+    static int first;
+
+    for (i = 0; i < historySliderLength; i++) {
+        possiblePositions[i] = 1;
+    }
+        
+    for (length = 0; length < activeSliderLength; length++) {
+        chr = activeSlider[length];
+        historySliderLengthPlusLength = historySliderLength + length;
+        first = 1;
+        for (hPos = length; hPos < historySliderLengthPlusLength; hPos++) {
+            hPosMinLength = hPos - length;
+
+            if (possiblePositions[hPosMinLength]) {
+                if (chr == historySlider[hPos] && (hPos < historySliderLength)) {
+                    // Nothing to do
+
+                    if (first) {
+                        first = 0;
+                        resultPos = hPos;
+                        resultLen = length;
+                    }
+                } else {
+                    possiblePositions[hPosMinLength] = 0;
+                    possibilities--;
+
+                    if (possibilities <= 0) {
+                        break;
+                    }
+                }
+            }
+        }
+        if (possibilities <= 0) {
+            break;
+        }
+    }
+
+    if (length >= minimalMatchLength) {
+        struct LZ77Compressor::Reference *m = new LZ77Compressor::Reference();
+        m->position = resultPos;
+        m->length = resultLen;
+        return m;
+    }
+        
+    return NULL;
+}
+*/
+
+LZ77Compressor::Reference* LZ77Compressor::checkForLongestMatch() {
+    static u_int historySliderLength, activeSliderLength;
+    historySliderLength = historySlider.length();
+    activeSliderLength = activeSlider.length();
+
+    static u_int ii, jj;
+    static u_int numberOfPossiblePositions;
+    numberOfPossiblePositions = 0;
+
+    static char chr;
+    chr = activeSlider[0];
+
+    static u_int maxLength, resultPos, resultLen, kk;
+    maxLength = 0;
+
+    for (ii = 0; ii < historySliderLength; ii++) {
+        if (chr == historySlider[ii]) {
+            possiblePositions[numberOfPossiblePositions] = ii;
+            numberOfPossiblePositions++;
+        }
+    }
+
+    for (ii = 0; ii < numberOfPossiblePositions; ii++) {
+        for (jj = 1; jj < activeSliderLength; jj++) {
+            kk = jj + possiblePositions[ii];
+            if (activeSlider[jj] != historySlider[kk] || kk >= historySliderLength) {
+                break;
+            }
+        }
+        if (jj > maxLength) {
+            maxLength = jj;
+            resultPos = possiblePositions[ii];
+            resultLen = jj;
+        }
+    }
+
+    if (maxLength >= minimalMatchLength) {
+        struct LZ77Compressor::Reference *m = new LZ77Compressor::Reference();
+        m->position = resultPos;
+        m->length = resultLen;
+        return m;
+    }
+
     return NULL;
 }
 
 void LZ77Compressor::initializeActiveSlider() {
     char c = '\0';
-    char flag = 0x00;
-    for (u_int i = 0; i < activeSliderLength; i++) {
+    char flag = CHAR_READ_SUCC;
+    for (u_int i = 0; i < activeLength; i++) {
         c = readChar(&flag);
-        if (flag != 0x00) {
+        if (flag != CHAR_READ_SUCC) {
             CONSOLE<< "Error reading file. Cannot initialize active slider." << ENDL;
             exit(1);
         }
@@ -200,79 +272,26 @@ void LZ77Compressor::initializeActiveSlider() {
     }
 }
 
-void LZ77Compressor::printSliders() {
-    CONSOLE << "|" << historySlider << "|" << activeSlider << "|" << ENDL; //  << " ";
-
-    for (u_int i = 0; i < historySliderLength; i++) {
-        CONSOLE << i % 10;
-    }
-    CONSOLE << " ";
-    for (u_int i = 0; i < activeSliderLength; i++) {
-        CONSOLE << i % 10;
-    }
-    CONSOLE << ENDL;
-}
-
-char LZ77Compressor::readChar(char *flag) {
-	static char c;
-	if (!(inputFile.get(c))) {
-		(*flag) = 0x01;
-	}
-    return c;
-}
-
 void LZ77Compressor::addLetterToOutput(char letter) {
-    CONSOLE << "Letter   " << letter << ENDL;
-    writeABitToFile(0);
+    // CONSOLE << "Letter   " << letter << ENDL;
+
+    writeABitToFile(BIT_CHAR);
     for (int i = 7; i >= 0; i--) {
         writeABitToFile(letter >> i);
     }
 }
 
 void LZ77Compressor::addReferenceToOutput(u_int position, u_int length) {
-    CONSOLE << "Refrence " << position << " " << length << " (" << historySlider.substr(historySlider.length() - position, length) << ")" << ENDL;
+    // CONSOLE << "Refrence " << position << " " << length << " (" << historySlider.substr(historySlider.length() - position, length) << ")" << ENDL;
 
-    writeABitToFile(0);
-    for (int i = referenceHistoryBits - 1; i >= 0; i--) {
+    length -= minimalMatchLength;
+
+    writeABitToFile(BIT_REFERENCE);
+    for (int i = historySize - 1; i >= 0; i--) {
         writeABitToFile(position >> i);
     }
 
-    for (int i = referenceActiveBits - 1; i >= 0; i--) {
+    for (int i = activeSize - 1; i >= 0; i--) {
         writeABitToFile(length >> i);
     }
-}
-
-void LZ77Compressor::writeABitToFile(char bit) {
-    writeABitToFile(bit, false);
-}
-
-void LZ77Compressor::writeABitToFile(char bit, bool flush) {
-    static short currentBitNumber = 0;
-    static char c = 0;
-    
-    if (flush) {
-        outputFile << ((char)(c << (8 - currentBitNumber)));
-    }
-        
-    if (currentBitNumber == 8) {
-        outputFile << c;
-        c = 0;
-        currentBitNumber = 0;
-    } else {
-        c = c << 1;
-    }
-    
-    c = (c | (bit & 0x1));  
-    currentBitNumber++;
-}
-
-u_int LZ77Compressor::getBytesNeededForNumber(u_int number) {
-    u_int bound = 1;
-    for (int i = 0; i < 32; i++) {
-        if (bound >= number) {
-            return i;
-        }
-        bound *= 2;
-    } 
-    return 32;
 }

@@ -1,28 +1,24 @@
 #ifndef LZ77DECOMPRESSOR_H
 #define LZ77DECOMPRESSOR_H
 
-#define INVALID_CHAR 0x03
-#define u_int unsigned int
-#define CONSOLE std::cout
-#define ENDL std::endl
+#include "LZ77CompressorDecompressorBase.h"
+#include <vector>
+#include <math.h>
 
-#include <string>
-#include <fstream>
-#include <iostream>
-#include <stdlib.h>
+#define DEBUG_MODE
 
-class LZ77Decompressor {
+class LZ77Decompressor : public LZ77CompressorDecompressorBase {
 
     private:
-        std::string inputFileName;
-        std::ifstream inputFile;
-        std::string outputFileName;
-        std::ofstream outputFile;
 
-        void prepareInputFile();
-        void closeInputFile();
-        void prepareOutputFile();
-        void closeOutputFile();
+        u_int referenceHistoryBits, referenceActiveBits; // how many bits are needed to write reference and length (w_1, w_2)
+        u_int historyLength;
+        u_int minimalMatchLength;
+
+        std::vector<char> charBuffer;
+
+        void magic();
+        void readMetaData();
 
     public:
         LZ77Decompressor(std::string, std::string);
